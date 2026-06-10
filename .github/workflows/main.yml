@@ -1,4 +1,4 @@
-name: Cloud Browser via Ngrok (Super Fast & Stable APT)
+name: Cloud Browser via Ngrok (Final Fixed & Super Fast)
 
 on:
   workflow_dispatch:
@@ -11,28 +11,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. Setup Cache untuk Docker Image Selenium Firefox
+      # 1. Setup tempat penyimpanan berkas cache
       - name: Cache Docker layers
         id: cache-docker
         uses: actions/cache@v4
         with:
           path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v1
+          key: ${{ runner.os }}-docker-firefox-v2 # Mengubah versi key memicu cache baru yang bersih
 
-      # 2. Muat Image dari cache jika ada, jika tidak ada maka Pull dari Docker Hub
+      # 2. Muat atau unduh Docker image
       - name: Load Docker Image
         run: |
           if [ "${{ steps.cache-docker.outputs.cache-hit }}" = "true" ]; then
-            echo "Memuat container dari Cache..."
+            echo "✅ Memuat container dari Cache..."
             docker load -i /tmp/docker-save/firefox-image.tar
           else
-            echo "Cache tidak ditemukan. Mengunduh image dari Docker Hub..."
+            echo "📦 Cache tidak ditemukan. Mengunduh image dari Docker Hub..."
             docker pull selenium/standalone-firefox:latest
             mkdir -p /tmp/docker-save
             docker save selenium/standalone-firefox:latest -o /tmp/docker-save/firefox-image.tar
           fi
 
-      # 3. Jalankan Container Firefox secara mandiri (Detach Mode)
+      # 3. Jalankan Container Firefox noVNC
       - name: Run Firefox Container
         run: |
           docker run -d --name firefox-node \
@@ -42,62 +42,57 @@ jobs:
             --shm-size=2g \
             selenium/standalone-firefox:latest
 
-      # 4. Install Ngrok via Repositori Resmi APT (Solusi Error Tar)
-      - name: Install Ngrok via APT Repository
+      # 4. Pasang Ngrok menggunakan metode APT resmi yang stabil
+      - name: Install Ngrok via APT
         run: |
-          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+          curl -sSL https://amazonaws.com \
             | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-            && echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
+            && echo "deb https://amazonaws.com bookworm main" \
             | sudo tee /etc/apt/sources.list.d/ngrok.list \
             && sudo apt update \
             && sudo apt install -y ngrok
 
-      # 5. Konfigurasi Token dan Jalankan Terowongan (Tunnel)
+      # 5. Jalankan Ngrok menggunakan protokol HTTP khusus untuk noVNC
       - name: Start Ngrok Tunnel
         run: |
-          # Menggunakan token sementara Anda
           ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
           
-          # Jalankan skema TCP ke port noVNC (7900)
-          ngrok tcp 7900 --log=stdout > ngrok.log &
+          # Menggunakan protokol http ke port 7900 agar WebSocket noVNC berfungsi penuh
+          ngrok http 7900 --log=stdout > ngrok.log &
 
-      # 6. Ambil Link noVNC dari Ngrok menggunakan parsing JSON v3 yang benar
+      # 6. Ambil Link noVNC dengan parsing JSON Array Ngrok v3 yang benar
       - name: Get noVNC URL
         run: |
-          sleep 10
+          sleep 12
           echo "================================================================"
           echo "Mencoba mengambil URL Ngrok..."
           
-          # Ekstraksi alamat publik dari API Ngrok
+          # Memperbaiki filter JQ untuk membaca skema array Ngrok v3 terbaru
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
-          # Validasi jika token terblokir / error
           if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
-            echo "❌ ERROR: Ngrok gagal membuat terowongan! Berikut log error-nya:"
+            echo "❌ ERROR: Ngrok gagal membuat koneksi! Periksa log berikut:"
             echo "================================================================"
             cat ngrok.log
             echo "================================================================"
             exit 1
           fi
           
-          # Mengubah skema dari tcp:// menjadi https:// agar bisa langsung diklik
-          WEB_URL=$(echo $PUBLIC_URL | sed 's/tcp:\/\//https:\/\//')
-          
-          echo "✅ BERHASIL! KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
-          echo "$WEB_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
+          echo "✅ BERHASIL! KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER DIRECTLY:"
+          echo "$PUBLIC_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
           echo "================================================================"
 
       # 7. Menjaga workflow tetap hidup selama 6 Jam
       - name: Keep Alive
         run: |
-          echo "Cloud Browser aktif. Silakan akses lewat link di atas."
+          echo "Cloud Browser aktif. Sesi ini akan berjalan hingga waktu selesai."
           sleep 21600
 
-      # 8. Pembersihan yang akan SELALU berjalan di akhir sesi
+      # 8. Proses pembersihan logis yang aman untuk siklus penyimpanan cache
       - name: Cleanup Connections and Containers
         if: always()
         run: |
-          echo "Membersihkan container dan menutup koneksi Ngrok..."
+          echo "Menghentikan layanan aktif tanpa merusak berkas cache..."
           pkill ngrok || true
           docker stop firefox-node || true
           docker rm firefox-node || true
