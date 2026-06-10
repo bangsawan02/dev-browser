@@ -1,4 +1,4 @@
-name: Turbo Cloud Firefox (Fixed Link)
+name: Turbo Cloud Firefox (Cloudflared Tunnel)
 
 on:
   workflow_dispatch:
@@ -11,51 +11,54 @@ jobs:
       - name: Turbo Boot Environment
         run: |
           # 1. Jalankan Docker jlesage/firefox di background (Proses download dimulai langsung)
+          echo "🚀 Menjalankan container Firefox..."
           docker run -d \
             --name firefox \
             -p 5800:5800 \
             --shm-size=2g \
             jlesage/firefox:latest
 
-          # 2. Download Ngrok menggunakan cara yang lebih aman (Direct Binary)
-          echo "Downloading Ngrok..."
-          wget -q https://bin.equinox.io/c/b34edq6jn9t/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
-          
-          # Cek apakah file benar-benar terdownload, jika gagal gunakan link alternatif
-          if [ ! -s ngrok.tgz ]; then
-            wget -q https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.tgz -O ngrok.tgz
+          # 2. Download Cloudflared Binary Resmi
+          echo "📦 Mengunduh Cloudflared..."
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+          # 3. Jalankan Cloudflare Tunnel ke Port 5800 (Quick Tunnel Gratisan)
+          echo "🌐 Membuka terowongan Cloudflare..."
+          cloudflared tunnel --url http://localhost:5800 > cf.log 2>&1 &
+
+          # 4. Polling cepat untuk mengambil URL publik dari log Cloudflared
+          echo "⏳ Menunggu link siap..."
+          sleep 12
+
+          # Mengekstrak URL .trycloudflare.com dari file log
+          PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
+
+          # Jika gagal mengambil di percobaan pertama, tunggu sedikit lebih lama (antisipasi koneksi lambat)
+          if [ -z "$PUBLIC_URL" ]; then
+            echo "⚠️ Koneksi lambat, mencoba mengambil ulang URL..."
+            sleep 10
+            PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
           fi
 
-          tar -xzf ngrok.tgz
-          sudo mv ngrok /usr/local/bin/
-          rm ngrok.tgz
-
-          # 3. Konfigurasi Ngrok
-          # Gunakan token Anda sendiri jika ada, ini adalah token publik cadangan
-          ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN || '2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB' }}"
-          
-          # 4. Jalankan Ngrok Tunnel ke Port 5800
-          ngrok http 5800 --log=stdout > ngrok.log &
-
-          # 5. Polling cepat untuk mengambil URL
-          echo "Menunggu link siap..."
-          sleep 10
-          
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          
-          if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
-            echo "❌ Gagal mendapatkan URL. Menunggu lebih lama..."
-            sleep 10
-            PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          # Validasi apakah URL berhasil didapatkan
+          if [ -z "$PUBLIC_URL" ]; then
+            echo "❌ Gagal mendapatkan URL Cloudflared. Berikut isi log untuk debugging:"
+            echo "================================================================"
+            cat cf.log
+            echo "================================================================"
+            exit 1
           fi
 
           echo "================================================================"
           echo "✅ BERHASIL!"
-          echo "BUKA LINK INI:"
+          echo "BUKA LINK INI DI BROWSER KAMU:"
           echo "----------------------------------------------------------------"
           echo "$PUBLIC_URL"
           echo "----------------------------------------------------------------"
-          echo "Jika muncul layar hitam, tunggu 10 detik sampai Firefox selesai pull."
+          echo "Catatan: Jika muncul layar hitam atau loading, tunggu sekitar 10-20 detik"
+          echo "sampai background proses Docker pull selesai sepenuhnya."
           echo "================================================================"
 
       - name: Keep Session Alive
