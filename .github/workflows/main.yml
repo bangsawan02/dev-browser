@@ -17,7 +17,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v5 # Versi key baru untuk mengamankan penyimpanan cache pertama Anda
+          key: ${{ runner.os }}-docker-firefox-v7 # Naikkan versi key jika ingin force update cache baru
 
       # 2. Muat Image jika Cache-Hit, Unduh jika Cache-Miss
       - name: Load Docker Image
@@ -27,8 +27,8 @@ jobs:
             docker load -i /tmp/docker-save/firefox-image.tar
           else
             echo "📦 Cache tidak ditemukan. Mengunduh image dari Docker Hub..."
-            docker pull selenium/standalone-firefox:latest
             mkdir -p /tmp/docker-save
+            docker pull selenium/standalone-firefox:latest
             docker save selenium/standalone-firefox:latest -o /tmp/docker-save/firefox-image.tar
           fi
 
@@ -42,30 +42,40 @@ jobs:
             --shm-size=2g \
             selenium/standalone-firefox:latest
 
-      # 4. Gunakan Perintah APT Resmi Anda untuk Memasang Ngrok (Pasti Berhasil)
+      # PERBAIKAN UTAMA: Pakai action khusus untuk mengamankan cache saat ini juga (antisipasi jika di-cancel)
+      - name: Save Cache Early
+        uses: actions/cache/save@v4
+        if: steps.cache-docker.outputs.cache-hit != 'true'
+        with:
+          path: /tmp/docker-save
+          key: ${{ runner.os }}-docker-firefox-v7
+
+      # 4. Pasang Ngrok via APT
       - name: Install Ngrok via APT
         run: |
-          curl -sSL https://amazonaws.com \
+          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
             | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-            && echo "deb https://amazonaws.com bookworm main" \
+            && echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
             | sudo tee /etc/apt/sources.list.d/ngrok.list \
             && sudo apt update \
             && sudo apt install -y ngrok
 
-      # 5. Jalankan Ngrok menggunakan skema TCP ke port noVNC (Bypass Pemblokiran Cloud)
+      # 5. Jalankan Ngrok (Disarankan pakai GitHub Secrets untuk NGROK_AUTH_TOKEN)
       - name: Start Ngrok Tunnel
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
+          # Jika belum pasang di Secrets, ganti $NGROK_TOKEN di bawah dengan token baru kamu langsung
+          ngrok config add-authtoken "${NGROK_TOKEN:-2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB}"
           ngrok tcp 7900 --log=stdout > ngrok.log &
 
-      # 6. PERBAIKAN UTAMA: Ambil URL Ngrok dengan Indeks Array [0] yang Benar
+      # 6. Ambil URL Ngrok
       - name: Get noVNC URL
         run: |
           sleep 12
           echo "================================================================"
           echo "Mencoba mengekstrak URL Ngrok..."
           
-          # Menggunakan filter .tunnels[0].public_url untuk membaca format JSON Ngrok v3 terbaru
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
           if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
@@ -76,20 +86,19 @@ jobs:
             exit 1
           fi
           
-          # Mengubah prefiks alamat tcp:// menjadi https:// untuk kebutuhan noVNC Web UI
           CLEAN_URL=$(echo $PUBLIC_URL | sed 's/tcp:\/\//https:\/\//')
           
           echo "✅ SUKSES BESAR! SALIN DAN BUKA TAUTAN INI DI WEB BROWSER ANDA:"
           echo "$CLEAN_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
           echo "================================================================"
 
-      # 7. Sesi Hidup Selama 6 Jam (Langkah sukses = Cache aman tersimpan permanen)
+      # 7. Sesi Hidup (Diturunkan ke 5 jam 30 menit agar tidak menyentuh hard-timeout GitHub)
       - name: Keep Alive
         run: |
           echo "Cloud Browser Anda aktif. Silakan berselancar menggunakan tautan di atas."
-          sleep 21600
+          sleep 19800
 
-      # 8. Proses Pembersihan Kontainer Sesi Aktif
+      # 8. Proses Pembersihan
       - name: Cleanup Connections and Containers
         if: always()
         run: |
