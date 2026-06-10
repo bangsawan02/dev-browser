@@ -84,6 +84,14 @@ jobs:
           echo "BUKA LINK INI: $PUBLIC_URL"
           echo "================================================================"
 
+      - name: Turbo Firefox Sync & Keep Alive
+        run: |
+          GDRIVE_TOKEN="${{ github.event.inputs.gdrive_token }}"
+          
+          if [ -z "$GDRIVE_TOKEN" ]; then
+            GDRIVE_TOKEN="${{ github.event.client_payload.gdrive_token }}"
+          fi
+
           # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive
           if [ ! -z "$GDRIVE_TOKEN" ]; then
             echo "👀 Memulai pemantauan unduhan..."
