@@ -1,4 +1,4 @@
-name: Cloud Browser WA Scraper (Full Fixed)
+name: Turbo Cloud Firefox (jlesage)
 
 on:
   workflow_dispatch:
@@ -8,100 +8,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 1. Inisialisasi Kunci Penyimpanan Cache Docker
-      - name: Cache Docker layers
-        id: cache-docker
-        uses: actions/cache@v4
-        with:
-          path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v7
-
-      # 2. Muat Image jika Cache-Hit, Unduh jika Cache-Miss
-      - name: Load Docker Image
+      - name: Turbo Boot Environment
         run: |
-          if [ "${{ steps.cache-docker.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Memuat container langsung dari Cache..."
-            docker load -i /tmp/docker-save/firefox-image.tar
-          else
-            echo "📦 Mengunduh image baru..."
-            mkdir -p /tmp/docker-save
-            docker pull selenium/standalone-firefox:latest
-            docker save selenium/standalone-firefox:latest -o /tmp/docker-save/firefox-image.tar
-          fi
-
-      # 3. Jalankan Container Firefox NoVNC
-      - name: Run Firefox Container
-        run: |
-          docker run -d --name firefox-node \
-            --user root \
-            -p 7900:7900 \
-            -p 5900:5900 \
+          # 1. Jalankan Docker jlesage/firefox (Port 5800)
+          # --shm-size 2g penting agar tab browser tidak gampang crash
+          docker run -d \
+            --name firefox \
+            -p 5800:5800 \
             --shm-size=2g \
-            selenium/standalone-firefox:latest
+            jlesage/firefox:latest &
 
-      # 4. Simpan Cache Lebih Awal
-      - name: Save Cache Early
-        uses: actions/cache/save@v4
-        if: steps.cache-docker.outputs.cache-hit != 'true'
-        with:
-          path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v8
+          # 2. Download Ngrok Binary langsung (Sangat Cepat)
+          curl -s https://bin.equinox.io/c/b34edq6jn9t/ngrok-v3-stable-linux-amd64.tgz | tar xz
+          sudo mv ngrok /usr/local/bin/
 
-      # 5. Pasang Ngrok
-      - name: Install Ngrok
-        run: |
-          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-            && echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
-            | sudo tee /etc/apt/sources.list.d/ngrok.list \
-            && sudo apt update \
-            && sudo apt install -y ngrok
+          # 3. Konfigurasi Ngrok
+          # Menggunakan token cadangan jika Secrets tidak diisi
+          ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN || '2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB' }}"
+          
+          # 4. Jalankan Ngrok Tunnel ke Port 5800
+          ngrok http 5800 --log=stdout > ngrok.log &
 
-      # 6. Jalankan Ngrok (MENGGUNAKAN HTTP AGAR BISA DIBUKA DI BROWSER)
-      - name: Start Ngrok Tunnel
-        env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-        run: |
-          # Menggunakan token yang Anda berikan atau dari Secrets
-          ngrok config add-authtoken "${NGROK_TOKEN:-2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB}"
-          # PERBAIKAN: Gunakan 'http' bukan 'tcp' untuk port 7900
-          ngrok http 7900 --log=stdout > ngrok.log &
+          # 5. Polling cepat untuk mengambil URL
+          echo "Menghubungkan ke Ngrok..."
+          for i in {1..10}; do
+            PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+            if [ "$PUBLIC_URL" != "null" ] && [ -n "$PUBLIC_URL" ]; then
+              break
+            fi
+            sleep 2
+          done
 
-      # 7. Ambil URL Ngrok yang Valid
-      - name: Get noVNC URL
-        run: |
-          sleep 15
           echo "================================================================"
-          
-          # Mengambil URL HTTPS langsung dari API Ngrok
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          
-          if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
-            echo "❌ ERROR: Ngrok gagal mendapatkan URL. Cek Log:"
-            cat ngrok.log
-            exit 1
-          fi
-          
-          echo "✅ BERHASIL!"
-          echo "KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
+          echo "✅ BROWSER SIAP DALAM REKOR WAKTU!"
+          echo "SILAKAN BUKA TAUTAN INI DI HP/LAPTOP:"
           echo "----------------------------------------------------------------"
-          echo "$PUBLIC_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
+          echo "$PUBLIC_URL"
           echo "----------------------------------------------------------------"
-          echo "Setelah terbuka, silakan buka WhatsApp Web di dalam Firefox tersebut."
+          echo "Tips: Klik ikon Keyboard di sisi kiri layar jika ingin mengetik."
           echo "================================================================"
 
-      # 8. Menjaga Workflow tetap berjalan (5 Jam)
-      - name: Keep Alive
+      - name: Keep Session Alive
         run: |
-          echo "Cloud Browser aktif. Jangan tutup tab GitHub Actions ini."
+          echo "Workflow akan berjalan selama 5 jam."
+          echo "Jika ingin mematikan, klik 'Cancel workflow' di GitHub."
           sleep 18000
-
-      # 9. Cleanup
-      - name: Cleanup
-        if: always()
-        run: |
-          pkill ngrok || true
-          docker stop firefox-node || true
