@@ -17,7 +17,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v5 # Versi key baru untuk membersihkan loop error lama
+          key: ${{ runner.os }}-docker-firefox-v5 # Versi key baru untuk mengamankan penyimpanan cache pertama Anda
 
       # 2. Muat Image jika Cache-Hit, Unduh jika Cache-Miss
       - name: Load Docker Image
@@ -45,29 +45,28 @@ jobs:
       # 4. Gunakan Perintah APT Resmi Anda untuk Memasang Ngrok (Pasti Berhasil)
       - name: Install Ngrok via APT
         run: |
-          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+          curl -sSL https://amazonaws.com \
             | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
-            && echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
+            && echo "deb https://amazonaws.com bookworm main" \
             | sudo tee /etc/apt/sources.list.d/ngrok.list \
             && sudo apt update \
             && sudo apt install -y ngrok
 
-      # 5. Jalankan Ngrok menggunakan skema TCP ke port noVNC (Bypass Blokir Cloud Ngrok)
+      # 5. Jalankan Ngrok menggunakan skema TCP ke port noVNC (Bypass Pemblokiran Cloud)
       - name: Start Ngrok Tunnel
         run: |
           ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
-          # Protokol TCP digunakan agar tidak terblokir otomatis oleh kebijakan agen gratis Ngrok di GitHub
           ngrok tcp 7900 --log=stdout > ngrok.log &
 
-      # 6. Tangkap Alamat dan Lakukan Konversi Otomatis ke Tautan Web noVNC
+      # 6. PERBAIKAN UTAMA: Ambil URL Ngrok dengan Indeks Array [0] yang Benar
       - name: Get noVNC URL
         run: |
           sleep 12
           echo "================================================================"
           echo "Mencoba mengekstrak URL Ngrok..."
           
-          # Ekstraksi alamat publik array JSON Ngrok v3
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels.public_url')
+          # Menggunakan filter .tunnels[0].public_url untuk membaca format JSON Ngrok v3 terbaru
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
           if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
             echo "❌ ERROR: Terowongan gagal terbentuk. Berikut isi log Ngrok Anda:"
@@ -84,7 +83,7 @@ jobs:
           echo "$CLEAN_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
           echo "================================================================"
 
-      # 7. Sesi Hidup Selama 6 Jam (Langkah ini dicapai = Status Workflow Sukses = Cache Disimpan)
+      # 7. Sesi Hidup Selama 6 Jam (Langkah sukses = Cache aman tersimpan permanen)
       - name: Keep Alive
         run: |
           echo "Cloud Browser Anda aktif. Silakan berselancar menggunakan tautan di atas."
