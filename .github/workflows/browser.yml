@@ -76,12 +76,6 @@ jobs:
 
           if [ -z "$PUBLIC_URL" ]; then
             echo "❌ Gagal mendapatkan URL Cloudflared."
-            if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
-              curl -s -X POST \
-                -H "Content-Type: application/json" \
-                -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"url\": \"\", \"passcode\": \"$PASSCODE\", \"error\": \"Failed to hook Tunnel link\"}" \
-                "$APP_URL/api/callback/tunnel"
-            fi
             exit 1
           fi
 
@@ -89,14 +83,6 @@ jobs:
           echo "✅ BERHASIL!"
           echo "BUKA LINK INI: $PUBLIC_URL"
           echo "================================================================"
-
-          # Kirim notifikasi aktif ke Dashboard WebApp
-          if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"url\": \"$PUBLIC_URL\", \"passcode\": \"$PASSCODE\"}" \
-              "$APP_URL/api/callback/tunnel"
-          fi
 
           # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive
           if [ ! -z "$GDRIVE_TOKEN" ]; then
@@ -133,14 +119,6 @@ jobs:
                         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
 
                       echo "Tanggapan Drive: $RESPONSE"
-
-                      # Notify WebApp
-                      if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
-                        curl -s -X POST \
-                          -H "Content-Type: application/json" \
-                          -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"filename\": \"$filename\", \"passcode\": \"$PASSCODE\", \"status\": \"success\"}" \
-                          "$APP_URL/api/callback/download"
-                      fi
 
                       touch "/home/runner/uploaded_$filename"
                     fi
