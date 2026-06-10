@@ -1,0 +1,156 @@
+name: Turbo Cloud Firefox (Cloudflared Tunnel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gdrive_token:
+        description: 'Google Drive Access Token'
+        required: false
+        default: ''
+      app_url:
+        description: 'Webapp Callback URL'
+        required: false
+        default: ''
+      passcode:
+        description: 'Session Passcode'
+        required: false
+        default: ''
+  repository_dispatch:
+    types: [on_trigger_browser]
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Turbo Boot Environment
+        run: |
+          # 1. Parsing Input Parameter Sesi
+          GDRIVE_TOKEN="${{ github.event.inputs.gdrive_token }}"
+          APP_URL="${{ github.event.inputs.app_url }}"
+          PASSCODE="${{ github.event.inputs.passcode }}"
+          
+          if [ -z "$GDRIVE_TOKEN" ]; then
+            GDRIVE_TOKEN="${{ github.event.client_payload.gdrive_token }}"
+          fi
+          if [ -z "$APP_URL" ]; then
+            APP_URL="${{ github.event.client_payload.app_url }}"
+          fi
+          if [ -z "$PASSCODE" ]; then
+            PASSCODE="${{ github.event.client_payload.passcode }}"
+          fi
+
+          echo "🚀 Menjalankan container Firefox..."
+          mkdir -p /home/runner/downloads
+          
+          # Jalankan container Firefox (VNC default port 5800)
+          # Bind downloads ke folder host /home/runner/downloads
+          docker run -d \
+            --name firefox \
+            -p 5800:5800 \
+            -v /home/runner/downloads:/config/Downloads \
+            --shm-size=2g \
+            jlesage/firefox:latest
+
+          # 2. Unduh dan install Cloudflared Tunnel
+          echo "📦 Mengunduh Cloudflared..."
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+          # 3. Ekspos GUI port 5800 ke Cloudflare Tunnel
+          echo "🌐 Membuka terowongan Cloudflare..."
+          cloudflared tunnel --url http://localhost:5800 > cf.log 2>&1 &
+
+          # 4. Ambil URL Publik hasil tunnel
+          echo "⏳ Menunggu link siap..."
+          sleep 12
+
+          PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
+
+          if [ -z "$PUBLIC_URL" ]; then
+            echo "⚠️ Koneksi lambat, mencoba mengambil ulang URL..."
+            sleep 10
+            PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
+          fi
+
+          if [ -z "$PUBLIC_URL" ]; then
+            echo "❌ Gagal mendapatkan URL Cloudflared."
+            if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
+              curl -s -X POST \
+                -H "Content-Type: application/json" \
+                -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"url\": \"\", \"passcode\": \"$PASSCODE\", \"error\": \"Failed to hook Tunnel link\"}" \
+                "$APP_URL/api/callback/tunnel"
+            fi
+            exit 1
+          fi
+
+          echo "================================================================"
+          echo "✅ BERHASIL!"
+          echo "BUKA LINK INI: $PUBLIC_URL"
+          echo "================================================================"
+
+          # Kirim notifikasi aktif ke Dashboard WebApp
+          if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"url\": \"$PUBLIC_URL\", \"passcode\": \"$PASSCODE\"}" \
+              "$APP_URL/api/callback/tunnel"
+          fi
+
+          # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive
+          if [ ! -z "$GDRIVE_TOKEN" ]; then
+            echo "👀 Memulai pemantauan unduhan..."
+            
+            # Cari atau buat folder "Turbo Firefox Downloads" di GDrive
+            FOLDER_ID=$(curl -s -H "Authorization: Bearer $GDRIVE_TOKEN" \
+              "https://www.googleapis.com/drive/v3/files?q=name%3D%27Turbo%20Firefox%20Downloads%27%20and%20mimeType%3D%27application%2Fvnd.google-apps.folder%27%20and%20trashed%3Dfalse" | grep -o '"id": "[^"]*' | head -n 1 | cut -d'"' -f4)
+
+            if [ -z "$FOLDER_ID" ]; then
+              FOLDER_ID=$(curl -s -X POST \
+                -H "Authorization: Bearer $GDRIVE_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"name": "Turbo Firefox Downloads", "mimeType": "application/vnd.google-apps.folder"}' \
+                "https://www.googleapis.com/drive/v3/files" | grep -o '"id": "[^"]*' | head -n 1 | cut -d'"' -f4)
+            fi
+
+            echo "📁 Folder Sync GDrive ID: $FOLDER_ID"
+
+            while true; do
+              for filepath in /home/runner/downloads/*; do
+                if [ -f "$filepath" ]; then
+                  filename=$(basename "$filepath")
+                  # Skip berkas tidak lengkap (.part, temp/crdownload)
+                  if [[ ! "$filename" == *.part && ! "$filename" == .* && ! "$filename" == *.crdownload && ! "$filename" == *.tmp ]]; then
+                    if [ ! -f "/home/runner/uploaded_$filename" ]; then
+                      echo "📤 Berkas baru terdeteksi: $filename. Mengunggah ke Google Drive..."
+                      
+                      # Upload file via multipart upload ke GDrive
+                      RESPONSE=$(curl -s -X POST \
+                        -H "Authorization: Bearer $GDRIVE_TOKEN" \
+                        -F "metadata={name: '$filename', parents: ['$FOLDER_ID']};type=application/json;charset=UTF-8" \
+                        -F "file=@$filepath" \
+                        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+
+                      echo "Tanggapan Drive: $RESPONSE"
+
+                      # Notify WebApp
+                      if [ ! -z "$APP_URL" ] && [ ! -z "$PASSCODE" ]; then
+                        curl -s -X POST \
+                          -H "Content-Type: application/json" \
+                          -d "{\"run_id\": \"$GITHUB_RUN_ID\", \"filename\": \"$filename\", \"passcode\": \"$PASSCODE\", \"status\": \"success\"}" \
+                          "$APP_URL/api/callback/download"
+                      fi
+
+                      touch "/home/runner/uploaded_$filename"
+                    fi
+                  fi
+                fi
+              done
+              sleep 3
+            done &
+          fi
+
+          # 6. Jaga Sesi VM Browser Tetap Aktif selama 5 jam (18.000 detik)
+          echo "⏳ Firefox Cloud aktif..."
+          sleep 18000
