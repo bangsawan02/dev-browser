@@ -1,4 +1,4 @@
-name: Turbo Cloud Firefox (jlesage)
+name: Turbo Cloud Firefox (Fixed Link)
 
 on:
   workflow_dispatch:
@@ -10,46 +10,55 @@ jobs:
     steps:
       - name: Turbo Boot Environment
         run: |
-          # 1. Jalankan Docker jlesage/firefox (Port 5800)
-          # --shm-size 2g penting agar tab browser tidak gampang crash
+          # 1. Jalankan Docker jlesage/firefox di background (Proses download dimulai langsung)
           docker run -d \
             --name firefox \
             -p 5800:5800 \
             --shm-size=2g \
-            jlesage/firefox:latest &
+            jlesage/firefox:latest
 
-          # 2. Download Ngrok Binary langsung (Sangat Cepat)
-          curl -s https://bin.equinox.io/c/b34edq6jn9t/ngrok-v3-stable-linux-amd64.tgz | tar xz
+          # 2. Download Ngrok menggunakan cara yang lebih aman (Direct Binary)
+          echo "Downloading Ngrok..."
+          wget -q https://bin.equinox.io/c/b34edq6jn9t/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
+          
+          # Cek apakah file benar-benar terdownload, jika gagal gunakan link alternatif
+          if [ ! -s ngrok.tgz ]; then
+            wget -q https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.tgz -O ngrok.tgz
+          fi
+
+          tar -xzf ngrok.tgz
           sudo mv ngrok /usr/local/bin/
+          rm ngrok.tgz
 
           # 3. Konfigurasi Ngrok
-          # Menggunakan token cadangan jika Secrets tidak diisi
+          # Gunakan token Anda sendiri jika ada, ini adalah token publik cadangan
           ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN || '2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB' }}"
           
           # 4. Jalankan Ngrok Tunnel ke Port 5800
           ngrok http 5800 --log=stdout > ngrok.log &
 
           # 5. Polling cepat untuk mengambil URL
-          echo "Menghubungkan ke Ngrok..."
-          for i in {1..10}; do
+          echo "Menunggu link siap..."
+          sleep 10
+          
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
+            echo "❌ Gagal mendapatkan URL. Menunggu lebih lama..."
+            sleep 10
             PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-            if [ "$PUBLIC_URL" != "null" ] && [ -n "$PUBLIC_URL" ]; then
-              break
-            fi
-            sleep 2
-          done
+          fi
 
           echo "================================================================"
-          echo "✅ BROWSER SIAP DALAM REKOR WAKTU!"
-          echo "SILAKAN BUKA TAUTAN INI DI HP/LAPTOP:"
+          echo "✅ BERHASIL!"
+          echo "BUKA LINK INI:"
           echo "----------------------------------------------------------------"
           echo "$PUBLIC_URL"
           echo "----------------------------------------------------------------"
-          echo "Tips: Klik ikon Keyboard di sisi kiri layar jika ingin mengetik."
+          echo "Jika muncul layar hitam, tunggu 10 detik sampai Firefox selesai pull."
           echo "================================================================"
 
       - name: Keep Session Alive
         run: |
-          echo "Workflow akan berjalan selama 5 jam."
-          echo "Jika ingin mematikan, klik 'Cancel workflow' di GitHub."
+          echo "Workflow aktif selama 5 jam. Klik 'Cancel workflow' jika sudah selesai."
           sleep 18000
