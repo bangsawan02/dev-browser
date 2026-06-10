@@ -1,4 +1,4 @@
-name: Cloud Browser via Ngrok (noVNC Firefox)
+name: Cloud Browser via Ngrok (Super Fast Container Cache)
 
 on:
   workflow_dispatch:
@@ -6,49 +6,86 @@ on:
 jobs:
   browser:
     runs-on: ubuntu-latest
-    
-    # Menggunakan container Firefox yang sudah terintegrasi dengan noVNC
-    container:
-      image: selenium/standalone-firefox:latest
-      options: --user root
 
     steps:
-      - name: Verify Firefox Installation
-        run: firefox --version
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup and Start Ngrok
+      # 1. Setup Cache untuk Docker Image Selenium Firefox
+      - name: Cache Docker layers
+        id: cache-docker
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-save
+          key: ${{ runner.os }}-docker-firefox-v1
+
+      # 2. Muat Image dari cache jika ada, jika tidak ada maka Pull dari Docker Hub
+      - name: Load Docker Image
         run: |
-          # Download dan install Ngrok di dalam kontainer
+          if [ "${{ steps.cache-docker.outputs.cache-hit }}" = "true" ]; then
+            echo "Memuat container dari Cache..."
+            docker load -i /tmp/docker-save/firefox-image.tar
+          else
+            echo "Cache tidak ditemukan. Mengunduh image dari Docker Hub..."
+            docker pull selenium/standalone-firefox:latest
+            mkdir -p /tmp/docker-save
+            docker save selenium/standalone-firefox:latest -o /tmp/docker-save/firefox-image.tar
+          fi
+
+      # 3. Jalankan Container Firefox secara mandiri (Detach Mode)
+      - name: Run Firefox Container
+        run: |
+          docker run -d --name firefox-node \
+            --user root \
+            -p 7900:7900 \
+            -p 5900:5900 \
+            --shm-size=2g \
+            selenium/standalone-firefox:latest
+
+      # 4. Unduh Ngrok v3 Terbaru & Jalankan Terowongan (Tunnel)
+      - name: Setup and Start Ngrok (v3 Fixed)
+        run: |
+          # Menggunakan URL resmi Ngrok v3 yang stabil
           wget -q https://equinox.io
-          tar -xvzf ngrok-stable-linux-amd64.tgz
-          mv ngrok /usr/local/bin/ngrok
+          sudo tar -xvzf ./ngrok-v3-stable-linux-amd64.tgz -C /usr/local/bin
           
-          # Konfigurasi token Ngrok
+          # Menggunakan token sementara yang Anda berikan
           ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
           
-          # Sambungkan Ngrok ke HTTP port noVNC (Port default: 7900)
+          # Hubungkan Ngrok ke port noVNC (7900) yang ada di host runner
           ngrok http 7900 --log=stdout > ngrok.log &
 
+      # 5. Ambil Link noVNC dari Ngrok
       - name: Get noVNC URL
         run: |
-          sleep 5
+          sleep 7
           echo "================================================================"
           echo "KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
           
-          # Mengambil URL Publik Ngrok
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          # Ambil URL Publik dari API lokal Ngrok
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels.public_url')
           
-          # Membuat direct link yang otomatis mengisi password dan scaling layar
+          if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
+            echo "Gagal mendapatkan URL Ngrok. Periksa log di bawah ini."
+            cat ngrok.log
+            exit 1
+          fi
+          
+          # Cetak URL siap pakai otomatis masuk dengan password 'secret'
           echo "$PUBLIC_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
           echo "================================================================"
 
+      # 6. Menjaga workflow tetap hidup selama 6 Jam
       - name: Keep Alive
         run: |
-          echo "Cloud Browser aktif selama 6 jam."
+          echo "Cloud Browser aktif. Silakan akses lewat link di atas."
           sleep 21600
 
-      - name: Cleanup Connections
+      # 7. Pembersihan yang akan SELALU berjalan di akhir sesi
+      - name: Cleanup Connections and Containers
         if: always()
         run: |
-          echo "Menutup semua koneksi Ngrok..."
+          echo "Membersihkan container dan menutup koneksi Ngrok..."
           pkill ngrok || true
+          docker stop firefox-node || true
+          docker rm firefox-node || true
