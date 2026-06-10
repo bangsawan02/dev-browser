@@ -1,4 +1,4 @@
-name: Cloud Browser via Ngrok (Guaranteed Cache & NoVNC Link)
+name: Cloud Browser WA Scraper (Full Fixed)
 
 on:
   workflow_dispatch:
@@ -17,22 +17,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v7 # Naikkan versi key jika ingin force update cache baru
+          key: ${{ runner.os }}-docker-firefox-v7
 
       # 2. Muat Image jika Cache-Hit, Unduh jika Cache-Miss
       - name: Load Docker Image
         run: |
           if [ "${{ steps.cache-docker.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Memuat container langsung dari Cache GitHub..."
+            echo "✅ Memuat container langsung dari Cache..."
             docker load -i /tmp/docker-save/firefox-image.tar
           else
-            echo "📦 Cache tidak ditemukan. Mengunduh image dari Docker Hub..."
+            echo "📦 Mengunduh image baru..."
             mkdir -p /tmp/docker-save
             docker pull selenium/standalone-firefox:latest
             docker save selenium/standalone-firefox:latest -o /tmp/docker-save/firefox-image.tar
           fi
 
-      # 3. Jalankan Container Firefox NoVNC (Port: 7900)
+      # 3. Jalankan Container Firefox NoVNC
       - name: Run Firefox Container
         run: |
           docker run -d --name firefox-node \
@@ -42,16 +42,16 @@ jobs:
             --shm-size=2g \
             selenium/standalone-firefox:latest
 
-      # PERBAIKAN UTAMA: Pakai action khusus untuk mengamankan cache saat ini juga (antisipasi jika di-cancel)
+      # 4. Simpan Cache Lebih Awal
       - name: Save Cache Early
         uses: actions/cache/save@v4
         if: steps.cache-docker.outputs.cache-hit != 'true'
         with:
           path: /tmp/docker-save
-          key: ${{ runner.os }}-docker-firefox-v7
+          key: ${{ runner.os }}-docker-firefox-v8
 
-      # 4. Pasang Ngrok via APT
-      - name: Install Ngrok via APT
+      # 5. Pasang Ngrok
+      - name: Install Ngrok
         run: |
           curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
             | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
@@ -60,49 +60,48 @@ jobs:
             && sudo apt update \
             && sudo apt install -y ngrok
 
-      # 5. Jalankan Ngrok (Disarankan pakai GitHub Secrets untuk NGROK_AUTH_TOKEN)
+      # 6. Jalankan Ngrok (MENGGUNAKAN HTTP AGAR BISA DIBUKA DI BROWSER)
       - name: Start Ngrok Tunnel
         env:
           NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          # Jika belum pasang di Secrets, ganti $NGROK_TOKEN di bawah dengan token baru kamu langsung
+          # Menggunakan token yang Anda berikan atau dari Secrets
           ngrok config add-authtoken "${NGROK_TOKEN:-2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB}"
-          ngrok tcp 7900 --log=stdout > ngrok.log &
+          # PERBAIKAN: Gunakan 'http' bukan 'tcp' untuk port 7900
+          ngrok http 7900 --log=stdout > ngrok.log &
 
-      # 6. Ambil URL Ngrok
+      # 7. Ambil URL Ngrok yang Valid
       - name: Get noVNC URL
         run: |
-          sleep 12
+          sleep 15
           echo "================================================================"
-          echo "Mencoba mengekstrak URL Ngrok..."
           
+          # Mengambil URL HTTPS langsung dari API Ngrok
           PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
           if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
-            echo "❌ ERROR: Terowongan gagal terbentuk. Berikut isi log Ngrok Anda:"
-            echo "================================================================"
+            echo "❌ ERROR: Ngrok gagal mendapatkan URL. Cek Log:"
             cat ngrok.log
-            echo "================================================================"
             exit 1
           fi
           
-          CLEAN_URL=$(echo $PUBLIC_URL | sed 's/tcp:\/\//https:\/\//')
-          
-          echo "✅ SUKSES BESAR! SALIN DAN BUKA TAUTAN INI DI WEB BROWSER ANDA:"
-          echo "$CLEAN_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
+          echo "✅ BERHASIL!"
+          echo "KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
+          echo "----------------------------------------------------------------"
+          echo "$PUBLIC_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
+          echo "----------------------------------------------------------------"
+          echo "Setelah terbuka, silakan buka WhatsApp Web di dalam Firefox tersebut."
           echo "================================================================"
 
-      # 7. Sesi Hidup (Diturunkan ke 5 jam 30 menit agar tidak menyentuh hard-timeout GitHub)
+      # 8. Menjaga Workflow tetap berjalan (5 Jam)
       - name: Keep Alive
         run: |
-          echo "Cloud Browser Anda aktif. Silakan berselancar menggunakan tautan di atas."
-          sleep 19800
+          echo "Cloud Browser aktif. Jangan tutup tab GitHub Actions ini."
+          sleep 18000
 
-      # 8. Proses Pembersihan
-      - name: Cleanup Connections and Containers
+      # 9. Cleanup
+      - name: Cleanup
         if: always()
         run: |
-          echo "Menghentikan instans memori RAM tanpa menghapus file cache .tar..."
           pkill ngrok || true
           docker stop firefox-node || true
-          docker rm firefox-node || true
