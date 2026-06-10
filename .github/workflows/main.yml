@@ -2,6 +2,8 @@ name: Turbo Cloud Firefox (Cloudflared Tunnel)
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [on_trigger_browser]
 
 jobs:
   browser:
@@ -10,7 +12,7 @@ jobs:
     steps:
       - name: Turbo Boot Environment
         run: |
-          # 1. Jalankan Docker jlesage/firefox di background (Proses download dimulai langsung)
+          # 1. Jalankan Docker jlesage/firefox di background
           echo "🚀 Menjalankan container Firefox..."
           docker run -d \
             --name firefox \
@@ -24,27 +26,24 @@ jobs:
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
-          # 3. Jalankan Cloudflare Tunnel ke Port 5800 (Quick Tunnel Gratisan)
+          # 3. Jalankan Cloudflare Tunnel ke Port 5800
           echo "🌐 Membuka terowongan Cloudflare..."
           cloudflared tunnel --url http://localhost:5800 > cf.log 2>&1 &
 
-          # 4. Polling cepat untuk mengambil URL publik dari log Cloudflared
+          # 4. Polling cepat untuk mengambil URL publik
           echo "⏳ Menunggu link siap..."
           sleep 12
 
-          # Mengekstrak URL .trycloudflare.com dari file log
           PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
 
-          # Jika gagal mengambil di percobaan pertama, tunggu sedikit lebih lama (antisipasi koneksi lambat)
           if [ -z "$PUBLIC_URL" ]; then
             echo "⚠️ Koneksi lambat, mencoba mengambil ulang URL..."
             sleep 10
             PUBLIC_URL=$(cat cf.log | grep -o 'https://[^ ]*.trycloudflare.com' | head -n 1)
           fi
 
-          # Validasi apakah URL berhasil didapatkan
           if [ -z "$PUBLIC_URL" ]; then
-            echo "❌ Gagal mendapatkan URL Cloudflared. Berikut isi log untuk debugging:"
+            echo "❌ Gagal mendapatkan URL Cloudflared. Berikut isi log:"
             echo "================================================================"
             cat cf.log
             echo "================================================================"
@@ -57,8 +56,6 @@ jobs:
           echo "----------------------------------------------------------------"
           echo "$PUBLIC_URL"
           echo "----------------------------------------------------------------"
-          echo "Catatan: Jika muncul layar hitam atau loading, tunggu sekitar 10-20 detik"
-          echo "sampai background proses Docker pull selesai sepenuhnya."
           echo "================================================================"
 
       - name: Keep Session Alive
