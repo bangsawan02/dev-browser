@@ -1,0 +1,77 @@
+name: Cloud Browser via Ngrok (Fast Cache)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Buat key cache unik berdasarkan daftar aplikasi yang di-install
+      - name: Create apt list for cache key
+        run: echo "chromium-browser x11vnc fluxbox xvfb" > apt-packages.txt
+
+      # 2. Cek apakah binary sudah ada di cache github
+      - name: Cache APT packages
+        id: cache-apt
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt/archives
+            /usr/bin/chromium-browser
+            /usr/bin/x11vnc
+            /usr/bin/fluxbox
+            /usr/bin/Xvfb
+          key: ${{ runner.os }}-apt-${{ hashFiles('apt-packages.txt') }}
+
+      # 3. Hanya install jika cache tidak ditemukan (cache-hit != 'true')
+      - name: Install dependencies
+        if: steps.cache-apt.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb fluxbox x11vnc chromium-browser
+
+      - name: Start Xvfb and Fluxbox
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          fluxbox > /dev/null 2>&1 &
+
+      - name: Start VNC Server
+        run: |
+          mkdir -p ~/.vnc
+          x11vnc -storepasswd "password123" ~/.vnc/passwd
+          x11vnc -display :99 -forever -shared -bg -rfbauth ~/.vnc/passwd -rfbport 5900
+
+      - name: Setup Ngrok
+        run: |
+          wget -q https://equinox.io
+          tar -xvzf ngrok-stable-linux-amd64.tgz
+          sudo mv ngrok /usr/local/bin/ngrok
+          ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
+          ngrok tcp 5900 --log=stdout > ngrok.log &
+
+      - name: Get Ngrok URL
+        run: |
+          sleep 10
+          curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels.public_url'
+          echo "Password VNC: password123"
+
+      - name: Keep Alive (Running Browser)
+        run: |
+          chromium-browser --no-sandbox --disable-gpu --remote-debugging-port=9222 &
+          sleep 21600 # Aktif 6 Jam
+
+      # 4. Contoh penggunaan if: always(). Aksi ini akan selalu berjalan di akhir 
+      # walaupun browser crash atau workflow di-stop manual untuk membersihkan proses.
+      - name: Cleanup Processes
+        if: always()
+        run: |
+          echo "Pembersihan sesi cloud browser dimulai..."
+          pkill chromium-browser || true
+          pkill x11vnc || true
+          pkill ngrok || true
+
