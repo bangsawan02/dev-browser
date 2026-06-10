@@ -1,4 +1,4 @@
-name: Cloud Browser via Ngrok (Super Fast Container Cache)
+name: Cloud Browser via Ngrok (Super Fast & Stable APT)
 
 on:
   workflow_dispatch:
@@ -42,46 +42,58 @@ jobs:
             --shm-size=2g \
             selenium/standalone-firefox:latest
 
-      # 4. Unduh Ngrok v3 Terbaru & Jalankan Terowongan (Tunnel)
-      - name: Setup and Start Ngrok (v3 Fixed)
+      # 4. Install Ngrok via Repositori Resmi APT (Solusi Error Tar)
+      - name: Install Ngrok via APT Repository
         run: |
-          # Menggunakan URL resmi Ngrok v3 yang stabil
-          wget -q https://equinox.io
-          sudo tar -xvzf ./ngrok-v3-stable-linux-amd64.tgz -C /usr/local/bin
-          
-          # Menggunakan token sementara yang Anda berikan
+          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
+            && echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list \
+            && sudo apt update \
+            && sudo apt install -y ngrok
+
+      # 5. Konfigurasi Token dan Jalankan Terowongan (Tunnel)
+      - name: Start Ngrok Tunnel
+        run: |
+          # Menggunakan token sementara Anda
           ngrok config add-authtoken 2eGyEJzcdePNVkGXaSao5HUo7QO_Ci6EDAi5wmRYV99kZQNB
           
-          # Hubungkan Ngrok ke port noVNC (7900) yang ada di host runner
-          ngrok http 7900 --log=stdout > ngrok.log &
+          # Jalankan skema TCP ke port noVNC (7900)
+          ngrok tcp 7900 --log=stdout > ngrok.log &
 
-      # 5. Ambil Link noVNC dari Ngrok
+      # 6. Ambil Link noVNC dari Ngrok menggunakan parsing JSON v3 yang benar
       - name: Get noVNC URL
         run: |
-          sleep 7
+          sleep 10
           echo "================================================================"
-          echo "KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
+          echo "Mencoba mengambil URL Ngrok..."
           
-          # Ambil URL Publik dari API lokal Ngrok
-          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels.public_url')
+          # Ekstraksi alamat publik dari API Ngrok
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
+          # Validasi jika token terblokir / error
           if [ "$PUBLIC_URL" = "null" ] || [ -z "$PUBLIC_URL" ]; then
-            echo "Gagal mendapatkan URL Ngrok. Periksa log di bawah ini."
+            echo "❌ ERROR: Ngrok gagal membuat terowongan! Berikut log error-nya:"
+            echo "================================================================"
             cat ngrok.log
+            echo "================================================================"
             exit 1
           fi
           
-          # Cetak URL siap pakai otomatis masuk dengan password 'secret'
-          echo "$PUBLIC_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
+          # Mengubah skema dari tcp:// menjadi https:// agar bisa langsung diklik
+          WEB_URL=$(echo $PUBLIC_URL | sed 's/tcp:\/\//https:\/\//')
+          
+          echo "✅ BERHASIL! KLIK TAUTAN DI BAWAH INI UNTUK MEMBUKA BROWSER:"
+          echo "$WEB_URL/vnc.html?autoconnect=1&resize=scale&password=secret"
           echo "================================================================"
 
-      # 6. Menjaga workflow tetap hidup selama 6 Jam
+      # 7. Menjaga workflow tetap hidup selama 6 Jam
       - name: Keep Alive
         run: |
           echo "Cloud Browser aktif. Silakan akses lewat link di atas."
           sleep 21600
 
-      # 7. Pembersihan yang akan SELALU berjalan di akhir sesi
+      # 8. Pembersihan yang akan SELALU berjalan di akhir sesi
       - name: Cleanup Connections and Containers
         if: always()
         run: |
