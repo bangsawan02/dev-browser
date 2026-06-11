@@ -70,7 +70,7 @@ jobs:
 
           # 2. Unduh dan install Cloudflared Tunnel
           echo "📦 Mengunduh Cloudflared..."
-          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
 
