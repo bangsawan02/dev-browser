@@ -130,11 +130,11 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }} \
             -d "{\"state\":\"success\",\"target_url\":\"$PUBLIC_URL\",\"description\":\"Firefox VNC Aktif\",\"context\":\"Turbo Firefox VNC\"}"
 
-          # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive
+          # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive & Real-Time Reporting
+          echo "👀 Memulai pemantauan unduhan..."
+          
+          # Jika GDrive Token disuplai, cari atau buat folder "Turbo Firefox Downloads" di GDrive
           if [ ! -z "$GDRIVE_TOKEN" ]; then
-            echo "👀 Memulai pemantauan unduhan..."
-            
-            # Cari atau buat folder "Turbo Firefox Downloads" di GDrive
             FOLDER_ID=$(curl -s -H "Authorization: Bearer $GDRIVE_TOKEN" \
               "https://www.googleapis.com/drive/v3/files?q=name%3D%27Turbo%20Firefox%20Downloads%27%20and%20mimeType%3D%27application%2Fvnd.google-apps.folder%27%20and%20trashed%3Dfalse" | grep -o '"id": "[^"]*' | head -n 1 | cut -d'"' -f4)
 
@@ -145,18 +145,55 @@ jobs:
                 -d '{"name": "Turbo Firefox Downloads", "mimeType": "application/vnd.google-apps.folder"}' \
                 "https://www.googleapis.com/drive/v3/files" | grep -o '"id": "[^"]*' | head -n 1 | cut -d'"' -f4)
             fi
-
             echo "📁 Folder Sync GDrive ID: $FOLDER_ID"
+          fi
 
-            while true; do
-              for filepath in /home/runner/downloads/*; do
-                if [ -f "$filepath" ]; then
-                  filename=$(basename "$filepath")
-                  # Skip berkas tidak lengkap (.part, temp/crdownload)
-                  if [[ ! "$filename" == *.part && ! "$filename" == .* && ! "$filename" == *.crdownload && ! "$filename" == *.tmp ]]; then
-                    if [ ! -f "/home/runner/uploaded_$filename" ]; then
-                      echo "📤 Berkas baru terdeteksi: $filename. Mengunggah ke Google Drive..."
-                      
+          while true; do
+            # A. Deteksi file yang sedang diunduh (aktif)
+            for filepath in /home/runner/downloads/*; do
+              if [ -f "$filepath" ]; then
+                filename=$(basename "$filepath")
+                filesize=$(du -h "$filepath" | cut -f1)
+                
+                # Jika ada file temporer unduhan (.part, .crdownload, .tmp, dsb)
+                if [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == .* ]]; then
+                  if [[ "$filename" == .* ]]; then continue; fi
+                  
+                  # Bersihkan ekstensi temporer untuk nama asli
+                  target_name="$filename"
+                  target_name="${target_name%.crdownload}"
+                  target_name="${target_name%.part}"
+                  target_name="${target_name%.tmp}"
+                  
+                  # Laporkan status download aktif ke App
+                  if [ ! -f "/home/runner/uploaded_$target_name" ]; then
+                    curl -s -X POST \
+                      -H "Content-Type: application/json" \
+                      -d "{"passcode":"$PASSCODE","run_id":"${{ github.run_id }}","filename":"$target_name","status":"downloading","size":"$filesize"}" \
+                      "$APP_URL/api/callback/download" || true
+                  fi
+                fi
+              fi
+            done
+
+            # B. Deteksi file yang sudah selesai diunduh dan upload ke GDrive (jika aktif)
+            for filepath in /home/runner/downloads/*; do
+              if [ -f "$filepath" ]; then
+                filename=$(basename "$filepath")
+                filesize=$(du -h "$filepath" | cut -f1)
+                
+                # Skip berkas tidak lengkap (.part, temp/crdownload)
+                if [[ ! "$filename" == *.part && ! "$filename" == .* && ! "$filename" == *.crdownload && ! "$filename" == *.tmp ]]; then
+                  if [ ! -f "/home/runner/uploaded_$filename" ]; then
+                    echo "📥 Berkas baru selesai terdeteksi: $filename"
+                    
+                    if [ ! -z "$GDRIVE_TOKEN" ]; then
+                      # Laporkan status "uploading" jika mengunggah ke GDrive
+                      curl -s -X POST \
+                        -H "Content-Type: application/json" \
+                        -d "{"passcode":"$PASSCODE","run_id":"${{ github.run_id }}","filename":"$filename","status":"uploading","size":"$filesize"}" \
+                        "$APP_URL/api/callback/download" || true
+
                       # Upload file via multipart upload ke GDrive
                       RESPONSE=$(curl -s -X POST \
                         -H "Authorization: Bearer $GDRIVE_TOKEN" \
@@ -165,15 +202,38 @@ jobs:
                         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
 
                       echo "Tanggapan Drive: $RESPONSE"
+                      
+                      # Ambil GDrive ID dari respons
+                      GDRIVE_ID=$(echo "$RESPONSE" | grep -o '"id": "[^"]*' | head -n 1 | cut -d'"' -f4)
 
-                      touch "/home/runner/uploaded_$filename"
+                      if [ ! -z "$GDRIVE_ID" ]; then
+                        echo "✅ Google Drive ID: $GDRIVE_ID"
+                        # Laporkan status "success" lengkap dengan Google Drive ID
+                        curl -s -X POST \
+                          -H "Content-Type: application/json" \
+                          -d "{"passcode":"$PASSCODE","run_id":"${{ github.run_id }}","filename":"$filename","status":"success","gdriveId":"$GDRIVE_ID","size":"$filesize"}" \
+                          "$APP_URL/api/callback/download" || true
+                      else
+                        curl -s -X POST \
+                          -H "Content-Type: application/json" \
+                          -d "{"passcode":"$PASSCODE","run_id":"${{ github.run_id }}","filename":"$filename","status":"completed","size":"$filesize"}" \
+                          "$APP_URL/api/callback/download" || true
+                      fi
+                    else
+                      # Tanpa Google Drive, laporkan sebagai "completed" secara lokal
+                      curl -s -X POST \
+                        -H "Content-Type: application/json" \
+                        -d "{"passcode":"$PASSCODE","run_id":"${{ github.run_id }}","filename":"$filename","status":"completed","size":"$filesize"}" \
+                        "$APP_URL/api/callback/download" || true
                     fi
+
+                    touch "/home/runner/uploaded_$filename"
                   fi
                 fi
-              done
-              sleep 3
-            done &
-          fi
+              fi
+            done
+            sleep 4
+          done &
 
           # 6. Jaga Sesi VM Browser Tetap Aktif selama 5 jam (18.000 detik)
           echo "⏳ Firefox Cloud aktif..."
