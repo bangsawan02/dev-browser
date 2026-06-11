@@ -77,7 +77,8 @@ jobs:
           echo "🚀 Menjalankan container Firefox..."
           mkdir -p /home/runner/downloads
           mkdir -p /home/runner/firefox_profile
-          sudo chown -R 1000:1000 /home/runner/firefox_profile || true
+          sudo chown -R 1000:1000 /home/runner/firefox_profile /home/runner/downloads || true
+          sudo chmod -R 777 /home/runner/firefox_profile /home/runner/downloads || true
           
           # Jalankan container Firefox (VNC default port 5800)
           # Bind profile ke folder host /home/runner/firefox_profile agar tersimpan
