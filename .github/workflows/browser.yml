@@ -179,6 +179,15 @@ jobs:
           echo "⏳ Firefox Cloud aktif..."
           sleep 18000
 
+      - name: Prep and Fix Permissions for Cache
+        if: always()
+        run: |
+          echo "⏹️ Memberhentikan container Firefox..."
+          docker stop firefox || true
+          echo "🔑 Mengatur hak milik file profile ke runner..."
+          sudo chown -R $(id -u):$(id -g) /home/runner/firefox_profile || true
+          sudo chown -R $(id -u):$(id -g) /home/runner/docker-image || true
+
       - name: Save Firefox Profile Data
         if: always()
         uses: actions/cache/save@v4
