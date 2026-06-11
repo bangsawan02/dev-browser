@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Persist Firefox Profile Data
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /home/runner/firefox_profile
           key: firefox-profile-${{ github.run_id }}
@@ -164,3 +164,10 @@ jobs:
           # 6. Jaga Sesi VM Browser Tetap Aktif selama 5 jam (18.000 detik)
           echo "⏳ Firefox Cloud aktif..."
           sleep 18000
+
+      - name: Save Firefox Profile Data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/firefox_profile
+          key: firefox-profile-${{ github.run_id }}
