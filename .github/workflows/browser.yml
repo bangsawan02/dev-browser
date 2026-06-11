@@ -35,7 +35,20 @@ jobs:
           restore-keys: |
             firefox-profile-
 
-      - name: Turbo Boot Environment
+      - name: Cache Docker Image
+        id: cache-docker
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/docker-image
+          key: docker-firefox-latest
+
+      - name: Load Docker Image
+        if: steps.cache-docker.outputs.cache-hit == 'true'
+        run: |
+          echo "🔄 Memuat image Firefox dari cache..."
+          docker load -i /home/runner/docker-image/firefox.tar || echo "Gagal memuat cache, akan mengunduh ulang."
+
+      - name: Turbo Boot Environment & Keep Alive
         run: |
           # 1. Parsing Input Parameter Sesi
           GDRIVE_TOKEN="${{ github.event.inputs.gdrive_token }}"
@@ -50,6 +63,15 @@ jobs:
           fi
           if [ -z "$PASSCODE" ]; then
             PASSCODE="${{ github.event.client_payload.passcode }}"
+          fi
+
+          # Jika image belum ada, unduh dan simpan
+          if [[ "$(docker images -q jlesage/firefox:latest 2> /dev/null)" == "" ]]; then
+            echo "📥 Mengunduh image Firefox..."
+            docker pull jlesage/firefox:latest
+            mkdir -p /home/runner/docker-image
+            docker save jlesage/firefox:latest -o /home/runner/docker-image/firefox.tar
+            echo "✅ Image berhasil disimpan ke cache offline."
           fi
 
           echo "🚀 Menjalankan container Firefox..."
@@ -107,14 +129,6 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }} \
             -d "{\"state\":\"success\",\"target_url\":\"$PUBLIC_URL\",\"description\":\"Firefox VNC Aktif\",\"context\":\"Turbo Firefox VNC\"}"
-
-      - name: Turbo Firefox Sync & Keep Alive
-        run: |
-          GDRIVE_TOKEN="${{ github.event.inputs.gdrive_token }}"
-          
-          if [ -z "$GDRIVE_TOKEN" ]; then
-            GDRIVE_TOKEN="${{ github.event.client_payload.gdrive_token }}"
-          fi
 
           # 5. Background Folder Watcher: Auto-Upload Berkas ke Google Drive
           if [ ! -z "$GDRIVE_TOKEN" ]; then
