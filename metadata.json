@@ -1,0 +1,6 @@
+{
+  "name": "Cloud Browser",
+  "description": "Cloud-accelerated browser simulation with trackpad and gamepad features.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

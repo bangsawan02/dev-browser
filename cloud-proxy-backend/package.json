@@ -1,0 +1,15 @@
+{
+  "name": "cloud-proxy-rendering-worker",
+  "version": "1.0.0",
+  "description": "High-performance web proxy and rendering engine for Cloud Browser, deployable to Cloudflare Workers using HTMLRewriter.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.57.1"
+  },
+  "private": true
+}
