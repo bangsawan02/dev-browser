@@ -57,40 +57,46 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
     
-      - name: Setup OpenSSL for Android Target
+      - name: Setup OpenSSL & Executable Permissions
         run: |
-          # FreeRDP requires OpenSSL prebuilt or downloaded.
-          # The FreeRDP android script includes custom downloader routines 
-          # inside client/Android/prepare-openssl.sh or within gradle dependencies.
-          # Here we ensure executable permissions are set.
           if [ -f "client/Android/prepare-openssl.sh" ]; then
             chmod +x client/Android/prepare-openssl.sh
           fi
+          # Perbaikan path ke folder Studio
           chmod +x client/Android/Studio/gradlew
 
       - name: Configure CMake and Android ABI Limits
         run: |
           # Inject target ABIs limits into gradle properties to speed up compiles
-          echo "android.injected.build.abi=arm64-v8a" >> client/Android/gradle.properties
-          echo "FREERDP_ANDROID_ABI=arm64-v8a" >> client/Android/gradle.properties
+          echo "android.injected.build.abi=arm64-v8a" >> client/Android/Studio/gradle.properties
+          echo "FREERDP_ANDROID_ABI=arm64-v8a" >> client/Android/Studio/gradle.properties
 
-      - name: Setup Android Release Keystore File
+      - name: Generate Manual Keystore
         run: |
-          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > client/Android/app/release.keystore
-        env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          # Membuat keystore manual on-the-fly untuk proses build
+          # Kita simpan di dalam folder app sesuai ekspektasi gradle
+          keytool -genkey -v \
+            -keystore client/Android/Studio/app/release.keystore \
+            -alias freerdp_alias \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=FreeRDP Builder, OU=Android, O=FreeRDP, L=Unknown, S=Unknown, C=US" \
+            -storepass freerdp_pass \
+            -keypass freerdp_pass
 
       - name: Setup Gradle Build Signing Properties
         run: |
-          cat <<EOF >> client/Android/gradle.properties
+          # Menambahkan konfigurasi keystore yang baru dibuat ke gradle.properties
+          cat <<EOF >> client/Android/Studio/gradle.properties
           RELEASE_STORE_FILE=release.keystore
-          RELEASE_STORE_PASSWORD=${{ secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_STORE_PASSWORD=freerdp_pass
+          RELEASE_KEY_ALIAS=freerdp_alias
+          RELEASE_KEY_PASSWORD=freerdp_pass
           EOF
     
       - name: Build FreeRDP Android Clients (RELEASE)
-        working-directory: client/Android
+        working-directory: client/Android/Studio
         run: |
           ./gradlew assembleRelease --stacktrace --no-daemon
 
@@ -98,7 +104,7 @@ jobs:
         id: locate-apk
         run: |
           echo "Finding compiled APKs..."
-          APK_PATH=$(find client/Android -name "*.apk" | head -n 1)
+          APK_PATH=$(find client/Android/Studio -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "ERROR: Compiled APK not found!"
             exit 1
