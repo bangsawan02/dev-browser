@@ -66,7 +66,7 @@ jobs:
           if [ -f "client/Android/prepare-openssl.sh" ]; then
             chmod +x client/Android/prepare-openssl.sh
           fi
-          chmod +x client/Android/gradlew
+          chmod +x client/Android/Studio/gradlew
 
       - name: Configure CMake and Android ABI Limits
         run: |
