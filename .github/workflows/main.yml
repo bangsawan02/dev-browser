@@ -1,0 +1,115 @@
+name: FreeRDP Android APK Builder
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - 'releases/**'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+    name: Build FreeRDP Android APK
+    
+    steps:
+      - name: Checkout FreeRDP Sources (Recursive)
+        uses: actions/checkout@v4
+        with:
+          repository: freerdp/freerdp
+          ref: stable-3.0
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java Development Kit (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Android SDK & Setup NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 26.1.10909125
+        run: |
+          echo "y" | sdkmanager --install "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=/usr/local/lib/android/sdk/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Install System Compilation Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build ccache git libssl-dev pkg-config
+          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+
+      - name: Cache Build Dependencies & Gradle Packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.ccache
+            $GITHUB_WORKSPACE/.ccache
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+    
+      - name: Setup OpenSSL for Android Target
+        run: |
+          # FreeRDP requires OpenSSL prebuilt or downloaded.
+          # The FreeRDP android script includes custom downloader routines 
+          # inside client/Android/prepare-openssl.sh or within gradle dependencies.
+          # Here we ensure executable permissions are set.
+          if [ -f "client/Android/prepare-openssl.sh" ]; then
+            chmod +x client/Android/prepare-openssl.sh
+          fi
+          chmod +x client/Android/gradlew
+
+      - name: Configure CMake and Android ABI Limits
+        run: |
+          # Inject target ABIs limits into gradle properties to speed up compiles
+          echo "android.injected.build.abi=arm64-v8a" >> client/Android/gradle.properties
+          echo "FREERDP_ANDROID_ABI=arm64-v8a" >> client/Android/gradle.properties
+
+      - name: Setup Android Release Keystore File
+        run: |
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > client/Android/app/release.keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+
+      - name: Setup Gradle Build Signing Properties
+        run: |
+          cat <<EOF >> client/Android/gradle.properties
+          RELEASE_STORE_FILE=release.keystore
+          RELEASE_STORE_PASSWORD=${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}
+          EOF
+    
+      - name: Build FreeRDP Android Clients (RELEASE)
+        working-directory: client/Android
+        run: |
+          ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Locate Compiles Output APK
+        id: locate-apk
+        run: |
+          echo "Finding compiled APKs..."
+          APK_PATH=$(find client/Android -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: Compiled APK not found!"
+            exit 1
+          fi
+          echo "Found APK: $APK_PATH"
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+
+      - name: Upload APK Compiled Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeRDP-Android-stable-3.0-release
+          path: ${{ steps.locate-apk.outputs.apk_path }}
+          retention-days: 14
+          compression-level: 6
